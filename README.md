@@ -40,8 +40,20 @@ Automated GitHub Actions workflow runner/orchestrator with energy profiling.
 
 Run the orchestrator:
 
+### UV
+
 ```bash
 uv run main.py workflow run
+```
+
+### Native Python
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
+sudo ./.venv/bin/python main.py workflow run
 ```
 
 ## Output
