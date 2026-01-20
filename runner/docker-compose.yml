@@ -1,0 +1,17 @@
+services:
+  worker:
+    image: myoung34/github-runner:latest
+    restart: unless-stopped
+    environment:
+      - RUNNER_SCOPE=org
+      - ORG_NAME=cucharoth-eco
+      - ACCESS_TOKEN=${GITHUB_PAT}
+      - RUNNER_NAME_PREFIX=eco-runner
+      - LABELS=eco-runner,docker-enabled
+      - DISABLE_AUTO_UPDATE=false
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/runner:/tmp/runner
+    scale: 1
