@@ -4,4 +4,15 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "ec-toolkit",
+    "httpx>=0.28.1",
+    "pandas>=2.3.3",
+    "psutil>=7.2.1",
+    "python-dotenv>=1.2.1",
+    "rich>=14.2.0",
+    "typer>=0.21.1",
+]
+
+[tool.uv.sources]
+ec-toolkit = { git = "https://github.com/sandro-hernandez/ec-toolkit.git" }
