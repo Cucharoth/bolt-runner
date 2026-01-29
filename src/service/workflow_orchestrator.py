@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import os
 import json
+from pathlib import Path
 from typing import List, Dict, Any
 from src.service.github_service import GitHubService
 from src.service.energy_logger_service import EnergyLoggerService
@@ -11,7 +12,7 @@ class WorkflowOrchestrator:
     def __init__(self):
         try:
             self.gh_service = GitHubService()
-            self.energy_logger = EnergyLoggerService()
+            # Energy logger is now instantiated per workflow run
         except ValueError as e:
             logger.critical(f"Service initialization failed: {e}")
             raise
@@ -35,17 +36,17 @@ class WorkflowOrchestrator:
 
         logger.info(f"Found {len(workflows)} workflows to process.")
         
-        # Start Energy Logger
-        self.energy_logger.start()
-        try:
-            self._process_workflows(workflows)
-        finally:
-            # Stop Energy Logger even if workflows fail
-            self.energy_logger.stop()
-
+        self._process_workflows(workflows)
 
     def _process_workflows(self, workflows: List[Dict[str, Any]]):
-        for item in workflows:
+        # Create base date directory
+        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base_log_dir = Path("logs") / timestamp_str
+        
+        if not base_log_dir.exists():
+            base_log_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, item in enumerate(workflows):
             owner = item.get("owner")
             repo = item.get("repo")
             workflow_id = item.get("workflow")
@@ -56,36 +57,62 @@ class WorkflowOrchestrator:
                 logger.error(f"Invalid workflow configuration item: {item}. Skipping.")
                 continue
 
-            logger.info(f"Triggering workflow '{workflow_id}' on {owner}/{repo}@{ref}...")
+            # Create specific directory for this workflow run
+            # underlying folder: {repo}_{workflow}_{index} to ensure uniqueness if multiple same workflows
+            safe_workflow_name = workflow_id.replace(".yml", "").replace(".yaml", "")
+            run_dir_name = f"{repo}_{safe_workflow_name}_{i+1}"
+            workflow_log_dir = base_log_dir / run_dir_name
             
-            trigger_time = datetime.now(timezone.utc)
-            
+            logger.info(f"Processing workflow {i+1}/{len(workflows)}: {workflow_id} (Log dir: {workflow_log_dir})")
+
+            # Initialize and start Energy Logger for this specific workflow
+            energy_logger = EnergyLoggerService(str(workflow_log_dir))
+            energy_logger.start()
+
             try:
-                self.gh_service.trigger_workflow(owner, repo, workflow_id, ref, inputs)
-                logger.info(f"Successfully triggered {workflow_id}. Waiting for run to start...")
+                logger.info(f"Triggering workflow '{workflow_id}' on {owner}/{repo}@{ref}...")
                 
-                # Wait for the run to appear
-                run = self.gh_service.wait_for_run_start(owner, repo, workflow_id, ref, trigger_time)
+                trigger_time = datetime.now(timezone.utc)
                 
-                if run:
-                    run_id = run["id"]
-                    run_url = run["html_url"]
-                    logger.info(f"Workflow run started: {run_url} (ID: {run_id})")
-                    logger.info("Waiting for execution to complete...")
+                try:
+                    self.gh_service.trigger_workflow(owner, repo, workflow_id, ref, inputs)
+                    logger.info(f"Successfully triggered {workflow_id}. Waiting for run to start...")
                     
-                    completed_run = self.gh_service.wait_for_completion(owner, repo, run_id)
-                    if completed_run:
-                        conclusion = completed_run.get("conclusion")
-                        logger.info(f"Workflow completed with status: {conclusion}")
+                    # Wait for the run to appear
+                    run = self.gh_service.wait_for_run_start(owner, repo, workflow_id, ref, trigger_time)
+                    
+                    if run:
+                        run_id = run["id"]
+                        run_url = run["html_url"]
+                        logger.info(f"Workflow run started: {run_url} (ID: {run_id})")
+                        logger.info("Waiting for execution to complete...")
                         
-                        logger.info("Downloading logs...")
-                        # Download logs to the same directory as energy logs
-                        log_path = self.gh_service.download_logs(owner, repo, run_id, str(self.energy_logger.run_dir))
-                        logger.info(f"Logs downloaded to: {log_path}")
+                        completed_run = self.gh_service.wait_for_completion(owner, repo, run_id)
+                        if completed_run:
+                            conclusion = completed_run.get("conclusion")
+                            logger.info(f"Workflow completed with status: {conclusion}")
+                            
+                            # Save completion metadata
+                            try:
+                                metadata_path = workflow_log_dir / "run_metadata.json"
+                                with open(metadata_path, 'w', encoding='utf-8') as f:
+                                    json.dump(completed_run, f, indent=2)
+                                logger.info(f"Run metadata saved to: {metadata_path}")
+                            except Exception as e:
+                                logger.error(f"Failed to save run metadata: {e}")
+
+                            logger.info("Downloading logs...")
+                            # Download logs to the same directory as energy logs
+                            log_path = self.gh_service.download_logs(owner, repo, run_id, str(workflow_log_dir))
+                            logger.info(f"Logs downloaded to: {log_path}")
+                        else:
+                            logger.error("Timed out waiting for workflow completion.")
                     else:
-                        logger.error("Timed out waiting for workflow completion.")
-                else:
-                    logger.error("Timed out waiting for workflow run to start (check if 'workflow_dispatch' is enabled).")
-                    
-            except Exception as e:
-                logger.error(f"Failed to process workflow {workflow_id} on {repo}: {e}")
+                        logger.error("Timed out waiting for workflow run to start (check if 'workflow_dispatch' is enabled).")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to process workflow {workflow_id} on {repo}: {e}")
+            
+            finally:
+                # Stop energy logger for this workflow
+                energy_logger.stop()

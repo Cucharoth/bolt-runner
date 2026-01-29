@@ -1,23 +1,17 @@
 from pathlib import Path
 from typing import Dict, Any
-from datetime import datetime
 from src.utils.logger import logger
 from ec_toolkit.logger.manager import LoggerManager
 
 class EnergyLoggerService:
-    def __init__(self, log_dir: str = "logs"):
-        self.log_dir = Path(log_dir)
+    def __init__(self, output_dir: str):
+        self.run_dir = Path(output_dir)
         self.manager = None
         self._ensure_log_dir()
-        # Create a unique run ID for this session
-        self.run_id = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-        self.run_dir = self.log_dir / self.run_id
-        if not self.run_dir.exists():
-            self.run_dir.mkdir(parents=True, exist_ok=True)
 
     def _ensure_log_dir(self):
-        if not self.log_dir.exists():
-            self.log_dir.mkdir(parents=True, exist_ok=True)
+        if not self.run_dir.exists():
+            self.run_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_default_config(self) -> Dict[str, Any]:
         import platform
@@ -42,10 +36,10 @@ class EnergyLoggerService:
 
     def start(self):
         try:
-            logger.info(f"Initializing Energy Logger (Run ID: {self.run_id})...")
+            logger.info(f"Initializing Energy Logger at {self.run_dir}...")
             config = self._get_default_config()
             
-            # Use the unique run directory instead of the base log directory
+            # Use the unique run directory directly
             self.manager = LoggerManager.from_config(config, self.run_dir)
             self.manager.start_all()
             logger.info("Energy Logger started.")
