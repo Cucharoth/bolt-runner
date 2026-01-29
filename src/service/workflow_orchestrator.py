@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 from src.service.github_service import GitHubService
 from src.service.energy_logger_service import EnergyLoggerService
 from src.utils.logger import logger
+from ec_toolkit.utils.freq import set_freq_or_default, restore_default
 
 class WorkflowOrchestrator:
     def __init__(self):
@@ -67,6 +68,20 @@ class WorkflowOrchestrator:
 
             # Initialize and start Energy Logger for this specific workflow
             energy_logger = EnergyLoggerService(str(workflow_log_dir))
+            
+            # Application of CPU freq configuration if present
+            cpu_config = item.get("cpu_config")
+            if cpu_config and cpu_config.get("enabled", False):
+                try:
+                    target_val = cpu_config.get("value")
+                    if target_val:
+                        logger.info(f"Setting CPU config: {target_val}")
+                        set_freq_or_default(target_val)
+                except Exception as e:
+                    logger.warning(f"Failed to set CPU frequency, this is not be a Linux system or there not enough permissions: {e}")
+            else:
+                logger.info("No CPU configuration provided or disabled; using default CPU settings.")
+
             energy_logger.start()
 
             try:
@@ -116,3 +131,11 @@ class WorkflowOrchestrator:
             finally:
                 # Stop energy logger for this workflow
                 energy_logger.stop()
+                
+                # Restore default CPU settings if they were modified
+                if cpu_config and cpu_config.get("enabled", False):
+                    try:
+                        logger.info("Restoring default CPU frequency...")
+                        restore_default()
+                    except Exception as e:
+                        logger.warning(f"Failed to restore default CPU frequency: {e}")
