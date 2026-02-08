@@ -80,7 +80,7 @@ class WorkflowOrchestrator:
                         
                         # Verify the frequency change
                         current_freqs = read_cpu_freq_per_core()
-                        logger.info(f"Current CPU frequencies per core: {current_freqs}")
+                        logger.debug(f"Current CPU frequencies per core: {current_freqs}")
                 except Exception as e:
                     logger.warning(f"Failed to set CPU frequency, this is not be a Linux system or there not enough permissions: {e}")
             else:
@@ -144,6 +144,6 @@ class WorkflowOrchestrator:
                         
                         # Verify the frequency restoration
                         current_freqs = read_cpu_freq_per_core()
-                        logger.info(f"Current CPU frequencies per core after restore: {current_freqs}")
+                        logger.debug(f"Current CPU frequencies per core after restore: {current_freqs}")
                     except Exception as e:
                         logger.warning(f"Failed to restore default CPU frequency: {e}")

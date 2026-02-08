@@ -46,6 +46,7 @@ Run the orchestrator:
 uv run main.py workflow run
 ```
 
+
 ### Native Python
 
 ```bash
@@ -62,3 +63,9 @@ Artifacts are saved in the `logs/` directory, organized by timestamp:
 
 - `logs/<timestamp>/cpu_total_interval.csv`: CPU usage metrics.
 - `logs/<timestamp>/<repo>_<run_id>.zip`: Downloaded GitHub Action logs.
+
+## Flags
+
+| Flag |Desc. |
+|-:|-|
+| -v | Enable verbose logging (DEBUG level). | 

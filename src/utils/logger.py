@@ -28,5 +28,16 @@ class Logger:
     def get_logger(self):
         return self.logger
 
+def configure_logging(verbose: bool = False):
+    """
+    Configure logging level.
+    :param verbose: If True, set level to DEBUG, else INFO.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.getLogger().setLevel(level)
+    # Ensure httpx/httpcore remain quiet unless extremely verbose (optional, keeping them warning for now to reduce noise)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING) 
+
 # Singleton instance
 logger = Logger().get_logger()
