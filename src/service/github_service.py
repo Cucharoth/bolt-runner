@@ -17,6 +17,7 @@ class GitHubService:
             "Accept": "application/vnd.github.v3+json",
             "X-GitHub-Api-Version": "2022-11-28"
         }
+        self.timeout = 60.0
 
     def trigger_workflow(self, owner: str, repo: str, workflow_id: str, ref: str, inputs: Dict[str, Any] = None) -> bool:
         """
@@ -30,7 +31,7 @@ class GitHubService:
         if inputs:
             payload["inputs"] = inputs
 
-        with httpx.Client() as client:
+        with httpx.Client(timeout=self.timeout) as client:
             response = client.post(url, headers=self.headers, json=payload)
             
             if response.status_code == 204:
@@ -57,7 +58,7 @@ class GitHubService:
                 logger.info(f"Waiting for run start... Attempt #{attempt} ({(time.time() - start_wait):.0f}s elapsed)")
 
             try:
-                with httpx.Client() as client:
+                with httpx.Client(timeout=self.timeout) as client:
                     response = client.get(url, headers=self.headers, params=params)
                     response.raise_for_status()
                     runs = response.json().get("workflow_runs", [])
@@ -90,7 +91,7 @@ class GitHubService:
                 logger.info(f"Waiting for completion... Attempt #{attempt} ({(time.time() - start_wait):.0f}s elapsed)")
 
             try:
-                with httpx.Client() as client:
+                with httpx.Client(timeout=self.timeout) as client:
                     response = client.get(url, headers=self.headers)
                     if response.status_code == 200:
                         run = response.json()
@@ -110,7 +111,7 @@ class GitHubService:
         """
         url = f"{self.base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
         
-        with httpx.Client(follow_redirects=True) as client:
+        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
             response = client.get(url, headers=self.headers)
             if response.status_code == 200:
                 file_path = os.path.join(destination_dir, f"{repo}_{run_id}.zip")
