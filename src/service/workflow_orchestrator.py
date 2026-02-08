@@ -1,6 +1,5 @@
 
 from datetime import datetime, timezone
-import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any
@@ -18,22 +17,50 @@ class WorkflowOrchestrator:
             logger.critical(f"Service initialization failed: {e}")
             raise
 
-    def run(self):
+    def run(self, config_path: Path = None):
         """
-        Orchestrates the execution of workflows defined in environment variables.
+        Orchestrates the execution of workflows.
+        Priority:
+        1. config_path argument
+        2. workflows.json in CWD
         """
         logger.info("Starting Bolt Runner execution...")
+        
+        workflows = []
 
-        workflow_config_str = os.getenv("WORKFLOW_CONFIG")
-        if not workflow_config_str:
-            logger.warning("No WORKFLOW_CONFIG found in environment variables.")
+        # 1. Try explicit config path
+        if config_path:
+            if config_path.exists():
+                logger.info(f"Loading configuration from {config_path}")
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        workflows = json.load(f)
+                except Exception as e:
+                    logger.error(f"Failed to load config file: {e}")
+                    raise
+            else:
+                logger.error(f"Config file not found: {config_path}")
+                raise FileNotFoundError(f"Config file {config_path} does not exist.")
+        
+        # 2. Try default workflows.json
+        elif Path("workflows.json").exists():
+            logger.info("Loading configuration from workflows.json")
+            try:
+                with open("workflows.json", 'r', encoding='utf-8') as f:
+                    workflows = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load workflows.json: {e}")
+                raise
+
+        # 3. No config found
+        else:
+            logger.error("No configuration file found.")
+            logger.info("Please provide a config file with --config or ensure 'workflows.json' exists in the current directory.")
             return
 
-        try:
-            workflows = json.loads(workflow_config_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse WORKFLOW_CONFIG JSON: {e}")
-            raise
+        if not workflows:
+            logger.warning("No workflows found to process.")
+            return
 
         logger.info(f"Found {len(workflows)} workflows to process.")
         
@@ -76,6 +103,16 @@ class WorkflowOrchestrator:
 
             # Initialize and start Energy Logger for this specific workflow
             energy_logger = EnergyLoggerService(str(workflow_log_dir))
+            
+            # Save description if present
+            description = item.get("description")
+            if description:
+                try:
+                    desc_path = workflow_log_dir / "description.txt"
+                    with open(desc_path, "w", encoding="utf-8") as f:
+                        f.write(description)
+                except Exception as e:
+                    logger.warning(f"Failed to save description: {e}")
             
             # Application of CPU freq configuration if present
             if cpu_config and cpu_config.get("enabled", False):
