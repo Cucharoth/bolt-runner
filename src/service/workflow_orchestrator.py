@@ -58,10 +58,18 @@ class WorkflowOrchestrator:
                 logger.error(f"Invalid workflow configuration item: {item}. Skipping.")
                 continue
 
+            # Extract CPU config early to include in folder name
+            cpu_config = item.get("cpu_config")
+            freq_suffix = ""
+            if cpu_config and cpu_config.get("enabled", False):
+                val = cpu_config.get("value")
+                if val:
+                    freq_suffix = f"_{val}"
+
             # Create specific directory for this workflow run
-            # underlying folder: {repo}_{workflow}_{index} to ensure uniqueness if multiple same workflows
+            # underlying folder: {repo}_{workflow}_{index}_{freq} to ensure uniqueness if multiple same workflows
             safe_workflow_name = workflow_id.replace(".yml", "").replace(".yaml", "")
-            run_dir_name = f"{repo}_{safe_workflow_name}_{i+1}"
+            run_dir_name = f"{repo}_{safe_workflow_name}_{i+1}{freq_suffix}"
             workflow_log_dir = base_log_dir / run_dir_name
             
             logger.info(f"Processing workflow {i+1}/{len(workflows)}: {workflow_id} (Log dir: {workflow_log_dir})")
@@ -70,7 +78,6 @@ class WorkflowOrchestrator:
             energy_logger = EnergyLoggerService(str(workflow_log_dir))
             
             # Application of CPU freq configuration if present
-            cpu_config = item.get("cpu_config")
             if cpu_config and cpu_config.get("enabled", False):
                 try:
                     target_val = cpu_config.get("value")
