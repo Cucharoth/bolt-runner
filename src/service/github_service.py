@@ -17,7 +17,41 @@ class GitHubService:
             "Accept": "application/vnd.github.v3+json",
             "X-GitHub-Api-Version": "2022-11-28"
         }
+        # Increase transport timeout
         self.timeout = 60.0
+        
+        # Configure a transport with retries for connection issues (connect, read, write timeouts)
+        # Note: This handles network layer retries, but not HTTP 502/503 status codes.
+        self.transport = httpx.HTTPTransport(retries=3)
+
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """
+        Internal helper to make HTTP requests with logic for 5xx retries.
+        """
+        max_retries = 10
+        wait_seconds = 30
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Re-create client to ensure fresh connection pool on long retries
+                with httpx.Client(timeout=self.timeout, transport=self.transport, follow_redirects=True) as client:
+                    response = client.request(method, url, headers=self.headers, **kwargs)
+                    
+                    # If success or client error (4xx), return immediately
+                    if response.status_code < 500:
+                        return response
+                    
+                    # Server Error (5xx)
+                    logger.warning(f"GitHub API Error {response.status_code}. Retry {attempt}/{max_retries} in {wait_seconds}s...")
+                    time.sleep(wait_seconds)
+            
+            except httpx.RequestError as e:
+                logger.warning(f"Network error: {e}. Retry {attempt}/{max_retries} in {wait_seconds}s...")
+                time.sleep(wait_seconds)
+        
+        # Final attempt
+        with httpx.Client(timeout=self.timeout, transport=self.transport, follow_redirects=True) as client:
+             return client.request(method, url, headers=self.headers, **kwargs)
 
     def trigger_workflow(self, owner: str, repo: str, workflow_id: str, ref: str, inputs: Dict[str, Any] = None) -> bool:
         """
@@ -25,19 +59,16 @@ class GitHubService:
         """
         url = f"{self.base_url}/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"
         
-        payload = {
-            "ref": ref
-        }
+        payload = {"ref": ref}
         if inputs:
             payload["inputs"] = inputs
 
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, headers=self.headers, json=payload)
-            
-            if response.status_code == 204:
-                return True
-            else:
-                raise Exception(f"Failed to trigger workflow: {response.status_code} - {response.text}")
+        response = self._request("POST", url, json=payload)
+        
+        if response.status_code == 204:
+            return True
+        else:
+            raise Exception(f"Failed to trigger workflow: {response.status_code} - {response.text}")
 
     def wait_for_run_start(self, owner: str, repo: str, workflow_id: str, ref: str, trigger_time: datetime, timeout: int = 120) -> Optional[Dict[str, Any]]:
         """
@@ -111,13 +142,14 @@ class GitHubService:
         """
         url = f"{self.base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
         
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-            response = client.get(url, headers=self.headers)
-            if response.status_code == 200:
-                file_path = os.path.join(destination_dir, f"{repo}_{run_id}.zip")
-                with open(file_path, "wb") as f:
-                    f.write(response.content)
-                return file_path
-            else:
-                raise Exception(f"Failed to download logs: {response.status_code}")
+        # Use _request to handle 502/5xx errors during download
+        response = self._request("GET", url)
+        
+        if response.status_code == 200:
+            file_path = os.path.join(destination_dir, f"{repo}_{run_id}.zip")
+            with open(file_path, "wb") as f:
+                f.write(response.content)
+            return file_path
+        else:
+            raise Exception(f"Failed to download logs: {response.status_code}")
 
