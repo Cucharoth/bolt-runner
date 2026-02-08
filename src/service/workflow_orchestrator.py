@@ -113,10 +113,16 @@ class WorkflowOrchestrator:
                         logger.info(f"Workflow run started: {run_url} (ID: {run_id})")
                         logger.info("Waiting for execution to complete...")
                         
+                        start_time = datetime.now()
                         completed_run = self.gh_service.wait_for_completion(owner, repo, run_id)
                         if completed_run:
+                            end_time = datetime.now()
+                            duration = end_time - start_time
+                            minutes, seconds = divmod(duration.total_seconds(), 60)
+                            
                             conclusion = completed_run.get("conclusion")
                             logger.info(f"Workflow completed with status: {conclusion}")
+                            logger.info(f"Workflow execution duration: {int(minutes)}m {int(seconds)}s")
                             
                             # Save completion metadata
                             try:
