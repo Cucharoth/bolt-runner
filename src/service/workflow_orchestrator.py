@@ -1,6 +1,7 @@
 
 from datetime import datetime, timezone
 import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any
 from src.service.github_service import GitHubService
@@ -64,7 +65,12 @@ class WorkflowOrchestrator:
 
         logger.info(f"Found {len(workflows)} workflows to process.")
         
-        self._process_workflows(workflows)
+        try:
+            self._process_workflows(workflows)
+        except KeyboardInterrupt:
+            logger.warning("Execution interrupted by user.")
+        except Exception as e:
+            logger.error(f"Unexpected error during orchestration: {e}")
 
     def _process_workflows(self, workflows: List[Dict[str, Any]]):
         # Create base date directory
@@ -197,3 +203,8 @@ class WorkflowOrchestrator:
                         logger.debug(f"Current CPU frequencies per core after restore: {current_freqs}")
                     except Exception as e:
                         logger.warning(f"Failed to restore default CPU frequency: {e}")
+                
+            # Add a small buffer between runs to avoid rate limits and allow system to settle
+            if i < len(workflows) - 1:
+                logger.info("Cooling down for 10 seconds before next workflow...")
+                time.sleep(10)
