@@ -1,6 +1,6 @@
 import typer
 from dotenv import load_dotenv
-from src.command import workflow
+from src.command import workflow, repo
 
 # Load environment variables from .env file
 load_dotenv()
@@ -19,6 +19,7 @@ def main(
     configure_logging(verbose)
 
 app.add_typer(workflow.app, name="workflow", help="Manage GitHub Action Workflows")
+app.add_typer(repo.app, name="repo", help="Manage Repository onboarding")
 
 if __name__ == "__main__":
     app()

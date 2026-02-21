@@ -69,3 +69,9 @@ Artifacts are saved in the `logs/` directory, organized by timestamp:
 | Flag |Desc. |
 |-:|-|
 | -v | Enable verbose logging (DEBUG level). | 
+
+
+## Onboarding
+```bash
+uv run main.py repo onboard
+```

@@ -81,6 +81,11 @@ class WorkflowOrchestrator:
             base_log_dir.mkdir(parents=True, exist_ok=True)
 
         for i, item in enumerate(workflows):
+            # Check for enabled status: defaults to True if missing
+            if not item.get("enabled", True):
+                logger.info(f"Skipping disabled workflow item {i+1} ({item.get('repo')}, {item.get('description', 'No description')})")
+                continue
+
             owner = item.get("owner")
             repo = item.get("repo")
             workflow_id = item.get("workflow")

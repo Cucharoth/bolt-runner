@@ -53,6 +53,82 @@ class GitHubService:
         with httpx.Client(timeout=self.timeout, transport=self.transport, follow_redirects=True) as client:
              return client.request(method, url, headers=self.headers, **kwargs)
 
+    def get_current_user(self) -> Dict[str, Any]:
+        """
+        Get the authenticated user's profile.
+        """
+        url = f"{self.base_url}/user"
+        response = self._request("GET", url)
+        if response.status_code == 200:
+            return response.json()
+        raise Exception(f"Failed to get current user: {response.status_code}")
+
+    def check_repo_exists(self, owner: str, repo: str) -> bool:
+        """
+        Check if a repository exists and is accessible.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}"
+        try:
+            response = self._request("GET", url)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def get_repo(self, owner: str, repo: str) -> Optional[Dict[str, Any]]:
+        """
+        Get repository details if it exists.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}"
+        try:
+            response = self._request("GET", url)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.warning(f"Error getting repo info {owner}/{repo}: {e}")
+            return None
+
+    def create_repo(self, name: str, org: Optional[str] = None, description: str = "", private: bool = False) -> Dict[str, Any]:
+        """
+        Create a new repository. If org is provided, creates in that organization.
+        Otherwise creates under the authenticated user.
+        """
+        if org:
+            url = f"{self.base_url}/orgs/{org}/repos"
+        else:
+            url = f"{self.base_url}/user/repos"
+        
+        payload = {
+            "name": name,
+            "description": description,
+            "private": private,
+            "has_issues": True,
+            "has_projects": True,
+            "has_wiki": True
+        }
+
+        response = self._request("POST", url, json=payload)
+        
+        if response.status_code == 201:
+            return response.json()
+        else:
+            raise Exception(f"Failed to create repository: {response.status_code} - {response.text}")
+
+    def update_repo(self, owner: str, repo: str, description: Optional[str] = None) -> bool:
+        """
+        Updates repository details.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}"
+        payload = {}
+        if description is not None:
+            payload["description"] = description
+            
+        if not payload:
+            return True
+        
+        response = self._request("PATCH", url, json=payload)
+        return response.status_code == 200
+
     def trigger_workflow(self, owner: str, repo: str, workflow_id: str, ref: str, inputs: Dict[str, Any] = None) -> bool:
         """
         Triggers a GitHub Actions workflow dispatch event.
