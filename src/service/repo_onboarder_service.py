@@ -58,11 +58,12 @@ class RepoOnboarderService:
                 target_name = source_url.rstrip("/").split("/")[-1].replace(".git", "")
 
             target_private = repo_config.get("private", False)
+            enable_dispatch = repo_config.get("enable_dispatch", True)
 
             # Pass workflow_url so we know which file to patch
-            self._process_single_repo(source_url, target_name, target_private, workflow_url)
+            self._process_single_repo(source_url, target_name, target_private, workflow_url, enable_dispatch)
 
-    def _process_single_repo(self, source_url: str, target_name: str, private: bool, workflow_url: Optional[str] = None):
+    def _process_single_repo(self, source_url: str, target_name: str, private: bool, workflow_url: Optional[str] = None, enable_dispatch: bool = True):
         full_target_name = f"{self.target_owner}/{target_name}"
         
         # 1. Check if safely exists
@@ -85,7 +86,7 @@ class RepoOnboarderService:
             workflow_path = self._extract_workflow_path(workflow_url)
             
             try:
-                self._mirror_git_content(source_url, authenticated_url, workflow_path)
+                self._mirror_git_content(source_url, authenticated_url, workflow_path, enable_dispatch)
                 logger.info(f"Successfully populated {full_target_name}")
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to populate {full_target_name}: Command '{e.cmd}' returned {e.returncode}")
@@ -119,7 +120,7 @@ class RepoOnboarderService:
             # Extract workflow path
             workflow_path = self._extract_workflow_path(workflow_url)
             
-            self._mirror_git_content(source_url, authenticated_url, workflow_path)
+            self._mirror_git_content(source_url, authenticated_url, workflow_path, enable_dispatch)
             
             logger.info(f"Successfully onboarded {full_target_name}")
 
@@ -141,7 +142,7 @@ class RepoOnboarderService:
             return f".github/workflows{sub_parts[1]}"
         return None
 
-    def _mirror_git_content(self, source_url: str, target_push_url: str, workflow_file_to_patch: Optional[str] = None):
+    def _mirror_git_content(self, source_url: str, target_push_url: str, workflow_file_to_patch: Optional[str] = None, enable_dispatch: bool = True):
         """
         Clones only the single default branch (depth 1), optionally patches a workflow file, and pushes to target.
         """
@@ -161,7 +162,9 @@ class RepoOnboarderService:
 
             # Patch workflow file if requested
             if workflow_file_to_patch:
-                self._patch_workflow_dispatch(temp_path, workflow_file_to_patch)
+                if enable_dispatch:
+                   self._patch_workflow_dispatch(temp_path, workflow_file_to_patch)
+                
                 # Cleanup other workflows to avoid triggering unwanted actions
                 self._cleanup_other_workflows(temp_path, workflow_file_to_patch)
 

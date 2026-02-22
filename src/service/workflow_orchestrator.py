@@ -80,6 +80,17 @@ class WorkflowOrchestrator:
         if not base_log_dir.exists():
             base_log_dir.mkdir(parents=True, exist_ok=True)
 
+        total_runs = 0
+        for item in workflows:
+            if not item.get("enabled", True):
+                continue
+            if "cpu_configs" in item and isinstance(item["cpu_configs"], list):
+                total_runs += len([c for c in item["cpu_configs"] if c.get("enabled", True)])
+            else:
+                total_runs += 1
+
+        current_run_index = 0
+
         for i, item in enumerate(workflows):
             # Check for enabled status: defaults to True if missing
             if not item.get("enabled", True):
@@ -90,126 +101,166 @@ class WorkflowOrchestrator:
             repo = item.get("repo")
             workflow_id = item.get("workflow")
             ref = item.get("ref", "main")
-            inputs = item.get("inputs", {})
+            base_inputs = item.get("inputs", {})
+            base_description = item.get("description", "")
 
             if not all([owner, repo, workflow_id]):
                 logger.error(f"Invalid workflow configuration item: {item}. Skipping.")
                 continue
 
-            # Extract CPU config early to include in folder name
-            cpu_config = item.get("cpu_config")
-            freq_suffix = ""
-            if cpu_config and cpu_config.get("enabled", False):
-                val = cpu_config.get("value")
-                if val:
-                    freq_suffix = f"_{val}"
-
-            # Create specific directory for this workflow run
-            # underlying folder: {repo}_{workflow}_{index}_{freq} to ensure uniqueness if multiple same workflows
-            safe_workflow_name = workflow_id.replace(".yml", "").replace(".yaml", "")
-            run_dir_name = f"{repo}_{safe_workflow_name}_{i+1}{freq_suffix}"
-            workflow_log_dir = base_log_dir / run_dir_name
-            
-            logger.info(f"Processing workflow {i+1}/{len(workflows)}: {workflow_id} (Log dir: {workflow_log_dir})")
-
-            # Initialize and start Energy Logger for this specific workflow
-            energy_logger = EnergyLoggerService(str(workflow_log_dir))
-            
-            # Save description if present
-            description = item.get("description")
-            if description:
-                try:
-                    desc_path = workflow_log_dir / "description.txt"
-                    with open(desc_path, "w", encoding="utf-8") as f:
-                        f.write(description)
-                except Exception as e:
-                    logger.warning(f"Failed to save description: {e}")
-            
-            # Application of CPU freq configuration if present
-            if cpu_config and cpu_config.get("enabled", False):
-                try:
-                    target_val = cpu_config.get("value")
-                    if target_val:
-                        logger.info(f"Setting CPU config: {target_val}")
-                        set_freq_or_default(target_val)
-                        
-                        # Verify the frequency change
-                        current_freqs = read_cpu_freq_per_core()
-                        logger.debug(f"Current CPU frequencies per core: {current_freqs}")
-                except Exception as e:
-                    logger.warning(f"Failed to set CPU frequency, this is not be a Linux system or there not enough permissions: {e}")
+            # normalize configs
+            configs_to_run = []
+            if "cpu_configs" in item and isinstance(item["cpu_configs"], list):
+                # New format: list of CPU configs
+                for cfg in item["cpu_configs"]:
+                    if cfg.get("enabled", True):
+                        # Merge description: Config description > Base description
+                        cfg_copy = cfg.copy()
+                        if "description" not in cfg_copy:
+                             cfg_copy["description"] = base_description
+                        configs_to_run.append(cfg_copy)
             else:
-                logger.info("No CPU configuration provided or disabled; using default CPU settings.")
-
-            energy_logger.start()
-
-            try:
-                logger.info(f"Triggering workflow '{workflow_id}' on {owner}/{repo}@{ref}...")
-                
-                trigger_time = datetime.now(timezone.utc)
-                
-                try:
-                    self.gh_service.trigger_workflow(owner, repo, workflow_id, ref, inputs)
-                    logger.info(f"Successfully triggered {workflow_id}. Waiting for run to start...")
-                    
-                    # Wait for the run to appear
-                    run = self.gh_service.wait_for_run_start(owner, repo, workflow_id, ref, trigger_time)
-                    
-                    if run:
-                        run_id = run["id"]
-                        run_url = run["html_url"]
-                        logger.info(f"Workflow run started: {run_url} (ID: {run_id})")
-                        logger.info("Waiting for execution to complete...")
-                        
-                        start_time = datetime.now()
-                        completed_run = self.gh_service.wait_for_completion(owner, repo, run_id)
-                        if completed_run:
-                            end_time = datetime.now()
-                            duration = end_time - start_time
-                            minutes, seconds = divmod(duration.total_seconds(), 60)
-                            
-                            conclusion = completed_run.get("conclusion")
-                            logger.info(f"Workflow completed with status: {conclusion}")
-                            logger.info(f"Workflow execution duration: {int(minutes)}m {int(seconds)}s")
-                            
-                            # Save completion metadata
-                            try:
-                                metadata_path = workflow_log_dir / "run_metadata.json"
-                                with open(metadata_path, 'w', encoding='utf-8') as f:
-                                    json.dump(completed_run, f, indent=2)
-                                logger.info(f"Run metadata saved to: {metadata_path}")
-                            except Exception as e:
-                                logger.error(f"Failed to save run metadata: {e}")
-
-                            logger.info("Downloading logs...")
-                            # Download logs to the same directory as energy logs
-                            log_path = self.gh_service.download_logs(owner, repo, run_id, str(workflow_log_dir))
-                            logger.info(f"Logs downloaded to: {log_path}")
-                        else:
-                            logger.error("Timed out waiting for workflow completion.")
-                    else:
-                        logger.error("Timed out waiting for workflow run to start (check if 'workflow_dispatch' is enabled).")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to process workflow {workflow_id} on {repo}: {e}")
+                # Old format: single cpu_config object in item
+                # cpu_config might be None if not provided
+                single_config = item.get("cpu_config", {})
+                if single_config.get("enabled", False):
+                     single_config_copy = single_config.copy()
+                     single_config_copy["description"] = base_description
+                     configs_to_run.append(single_config_copy)
+                elif not single_config:
+                     # No cpu_config provided at all, just run once with default inputs
+                     configs_to_run.append({"description": base_description, "enabled": True})
             
-            finally:
-                # Stop energy logger for this workflow
-                energy_logger.stop()
+            if not configs_to_run:
+                 logger.info(f"No enabled configurations for {repo}/{workflow_id}. Skipping.")
+                 continue
+
+            for config in configs_to_run:
+                current_run_index += 1
+                self._run_single_workflow(
+                    base_log_dir, 
+                    current_run_index, 
+                    total_runs, 
+                    owner, 
+                    repo, 
+                    workflow_id, 
+                    ref, 
+                    base_inputs, 
+                    config
+                )
                 
-                # Restore default CPU settings if they were modified
-                if cpu_config and cpu_config.get("enabled", False):
+                # Add a small buffer between runs
+                if current_run_index < total_runs:
+                    logger.info("Cooling down for 10 seconds before next workflow...")
+                    time.sleep(10)
+
+    def _run_single_workflow(self, base_log_dir: Path, run_index: int, total_runs: int, owner: str, repo: str, workflow_id: str, ref: str, inputs: Dict[str, Any], cpu_config: Dict[str, Any]):
+        
+        # Extract values
+        freq_value = cpu_config.get("value")
+        description = cpu_config.get("description")
+        
+        # Directory naming
+        safe_workflow_name = workflow_id.replace(".yml", "").replace(".yaml", "")
+        freq_suffix = f"_{freq_value}" if freq_value else ""
+        run_dir_name = f"{repo}_{safe_workflow_name}_{run_index}{freq_suffix}"
+        workflow_log_dir = base_log_dir / run_dir_name
+        
+        logger.info(f"Processing run {run_index}/{total_runs}: {workflow_id} (Log dir: {workflow_log_dir})")
+
+        # Initialize and start Energy Logger
+        energy_logger = EnergyLoggerService(str(workflow_log_dir))
+        
+        # Save description
+        if description:
+            try:
+                if not workflow_log_dir.exists():
+                    workflow_log_dir.mkdir(parents=True, exist_ok=True)
+                desc_path = workflow_log_dir / "description.txt"
+                with open(desc_path, "w", encoding="utf-8") as f:
+                    f.write(description)
+            except Exception as e:
+                logger.warning(f"Failed to save description: {e}")
+        
+        # Apply CPU Config
+        cpu_modified = False
+        if freq_value:
+            try:
+                logger.info(f"Setting CPU config: {freq_value}")
+                set_freq_or_default(freq_value)
+                cpu_modified = True
+                
+                # Verify
+                current_freqs = read_cpu_freq_per_core()
+                logger.debug(f"Current CPU frequencies per core: {current_freqs}")
+            except Exception as e:
+                logger.warning(f"Failed to set CPU frequency: {e}")
+        else:
+            logger.info("No CPU frequency configured; using default settings.")
+
+        energy_logger.start()
+
+        try:
+            logger.info(f"Triggering workflow '{workflow_id}' on {owner}/{repo}@{ref}...")
+            
+            trigger_time = datetime.now(timezone.utc)
+            
+            self.gh_service.trigger_workflow(owner, repo, workflow_id, ref, inputs)
+            logger.info(f"Successfully triggered {workflow_id}. Waiting for run to start...")
+            
+            # Wait for the run to appear
+            run = self.gh_service.wait_for_run_start(owner, repo, workflow_id, ref, trigger_time)
+            
+            if run:
+                run_id = run["id"]
+                run_url = run["html_url"]
+                logger.info(f"Workflow run started: {run_url} (ID: {run_id})")
+                logger.info("Waiting for execution to complete...")
+                
+                start_time = datetime.now()
+                completed_run = self.gh_service.wait_for_completion(owner, repo, run_id)
+                if completed_run:
+                    end_time = datetime.now()
+                    duration = end_time - start_time
+                    minutes, seconds = divmod(duration.total_seconds(), 60)
+                    
+                    conclusion = completed_run.get("conclusion")
+                    logger.info(f"Workflow completed with status: {conclusion}")
+                    logger.info(f"Workflow execution duration: {int(minutes)}m {int(seconds)}s")
+                    
+                    # Save completion metadata
                     try:
-                        logger.info("Restoring default CPU frequency...")
-                        restore_default()
-                        
-                        # Verify the frequency restoration
-                        current_freqs = read_cpu_freq_per_core()
-                        logger.debug(f"Current CPU frequencies per core after restore: {current_freqs}")
+                        metadata_path = workflow_log_dir / "run_metadata.json"
+                        with open(metadata_path, 'w', encoding='utf-8') as f:
+                            json.dump(completed_run, f, indent=2)
+                        logger.info(f"Run metadata saved to: {metadata_path}")
                     except Exception as e:
-                        logger.warning(f"Failed to restore default CPU frequency: {e}")
+                        logger.error(f"Failed to save run metadata: {e}")
+
+                    logger.info("Downloading logs...")
+                    # Download logs
+                    log_path = self.gh_service.download_logs(owner, repo, run_id, str(workflow_log_dir))
+                    logger.info(f"Logs downloaded to: {log_path}")
+                else:
+                    logger.error("Timed out waiting for workflow completion.")
+            else:
+                logger.error("Timed out waiting for workflow run to start (check if 'workflow_dispatch' is enabled).")
                 
-            # Add a small buffer between runs to avoid rate limits and allow system to settle
-            if i < len(workflows) - 1:
-                logger.info("Cooling down for 10 seconds before next workflow...")
-                time.sleep(10)
+        except Exception as e:
+            logger.error(f"Failed to process workflow {workflow_id} on {repo}: {e}")
+        
+        finally:
+            # Stop energy logger
+            energy_logger.stop()
+            
+            # Restore default CPU settings
+            if cpu_modified:
+                try:
+                    logger.info("Restoring default CPU frequency...")
+                    restore_default()
+                    
+                    # Verify
+                    current_freqs = read_cpu_freq_per_core()
+                    logger.debug(f"Current CPU frequencies per core after restore: {current_freqs}")
+                except Exception as e:
+                    logger.warning(f"Failed to restore default CPU frequency: {e}")
